@@ -43,11 +43,11 @@ const (
 	// envStdoutEnabled signal whether the output of the nodes get piped to stdout
 	envStdoutEnabled = "E2E_STDOUT"
 
-	// envE2ETestsType used just to display type of test if skipped
-	envE2ETestsType = "E2E_TESTS_TYPE"
-
 	// prefix for validator directory
 	defaultValidatorPrefix = "test-chain-"
+
+	// prefix for non validators directory
+	nonValidatorPrefix = "test-non-validator-"
 )
 
 var startTime int64
@@ -68,25 +68,26 @@ func resolveBinary() string {
 type TestClusterConfig struct {
 	t *testing.T
 
-	Name                string
-	Premine             []string // address[:amount]
-	PremineValidators   []string // address[:amount]
-	StakeAmounts        []string // address[:amount]
-	MintableNativeToken bool
-	HasBridge           bool
-	BootnodeCount       int
-	NonValidatorCount   int
-	WithLogs            bool
-	WithStdout          bool
-	LogsDir             string
-	TmpDir              string
-	BlockGasLimit       uint64
-	ValidatorPrefix     string
-	Binary              string
-	ValidatorSetSize    uint64
-	EpochSize           int
-	EpochReward         int
-	SecretsCallback     func([]types.Address, *TestClusterConfig)
+	Name                 string
+	Premine              []string // address[:amount]
+	PremineValidators    []string // address[:amount]
+	StakeAmounts         []string // address[:amount]
+	MintableNativeToken  bool
+	HasBridge            bool
+	BootnodeCount        int
+	NonValidatorCount    int
+	WithLogs             bool
+	WithStdout           bool
+	LogsDir              string
+	TmpDir               string
+	BlockGasLimit        uint64
+	ValidatorPrefix      string
+	Binary               string
+	ValidatorSetSize     uint64
+	EpochSize            int
+	EpochReward          int
+	NativeTokenConfigRaw string
+	SecretsCallback      func([]types.Address, *TestClusterConfig)
 
 	ContractDeployerAllowListAdmin   []types.Address
 	ContractDeployerAllowListEnabled []types.Address
@@ -97,6 +98,8 @@ type TestClusterConfig struct {
 
 	InitialTrieDB    string
 	InitialStateRoot types.Hash
+
+	IsPropertyTest bool
 
 	logsDirOnce sync.Once
 }
@@ -145,6 +148,12 @@ func (c *TestClusterConfig) GetStdout(name string, custom ...io.Writer) io.Write
 
 func (c *TestClusterConfig) initLogsDir() {
 	logsDir := path.Join("../..", fmt.Sprintf("e2e-logs-%d", startTime), c.t.Name())
+	if c.IsPropertyTest {
+		// property tests run cluster multiple times, so each cluster run will be in the main folder
+		// e2e-logs-{someNumber}/NameOfPropertyTest/NameOfPropertyTest-{someNumber}
+		// to have a separation between logs of each cluster run
+		logsDir = path.Join(logsDir, fmt.Sprintf("%v-%d", c.t.Name(), time.Now().UTC().Unix()))
+	}
 
 	if err := common.CreateDirSafe(logsDir, 0750); err != nil {
 		c.t.Fatal(err)
@@ -268,8 +277,28 @@ func WithTransactionsAllowListEnabled(addr types.Address) ClusterOption {
 	}
 }
 
+func WithPropertyTestLogging() ClusterOption {
+	return func(h *TestClusterConfig) {
+		h.IsPropertyTest = true
+	}
+}
+
+func WithNativeTokenConfig(tokenConfigRaw string) ClusterOption {
+	return func(h *TestClusterConfig) {
+		h.NativeTokenConfigRaw = tokenConfigRaw
+	}
+}
+
 func isTrueEnv(e string) bool {
 	return strings.ToLower(os.Getenv(e)) == "true"
+}
+
+func NewPropertyTestCluster(t *testing.T, validatorsCount int, opts ...ClusterOption) *TestCluster {
+	t.Helper()
+
+	opts = append(opts, WithPropertyTestLogging())
+
+	return NewTestCluster(t, validatorsCount, opts...)
 }
 
 func NewTestCluster(t *testing.T, validatorsCount int, opts ...ClusterOption) *TestCluster {
@@ -298,8 +327,10 @@ func NewTestCluster(t *testing.T, validatorsCount int, opts ...ClusterOption) *T
 	}
 
 	if !isTrueEnv(envE2ETestsEnabled) {
-		testType := os.Getenv(envE2ETestsType)
-		if testType == "" {
+		var testType string
+		if config.IsPropertyTest {
+			testType = "property"
+		} else {
 			testType = "integration"
 		}
 
@@ -317,13 +348,27 @@ func NewTestCluster(t *testing.T, validatorsCount int, opts ...ClusterOption) *T
 		once:        sync.Once{},
 	}
 
+	// in case no validators are specified in opts, all nodes will be validators
+	if cluster.Config.ValidatorSetSize == 0 {
+		cluster.Config.ValidatorSetSize = uint64(validatorsCount)
+	}
+
 	{
-		// run init accounts
-		addresses, err := cluster.InitSecrets(cluster.Config.ValidatorPrefix, validatorsCount)
+		// run init accounts for validators
+		addresses, err := cluster.InitSecrets(cluster.Config.ValidatorPrefix, int(cluster.Config.ValidatorSetSize))
 		require.NoError(t, err)
 
 		if cluster.Config.SecretsCallback != nil {
 			cluster.Config.SecretsCallback(addresses, cluster.Config)
+		}
+
+		if config.NonValidatorCount > 0 {
+			// run init accounts for non-validators
+			_, err = cluster.InitSecrets(nonValidatorPrefix, config.NonValidatorCount)
+			require.NoError(t, err)
+
+			// we don't call secrets callback on non-validators,
+			// since we have nothing to premine nor stake for non validators
 		}
 	}
 
@@ -353,11 +398,6 @@ func NewTestCluster(t *testing.T, validatorsCount int, opts ...ClusterOption) *T
 		require.NoError(t, err)
 	}
 
-	// in case no validators are specified in opts, all nodes will be validators
-	if cluster.Config.ValidatorSetSize == 0 {
-		cluster.Config.ValidatorSetSize = uint64(validatorsCount)
-	}
-
 	if cluster.Config.HasBridge {
 		err := cluster.Bridge.deployRootchainContracts(manifestPath)
 		require.NoError(t, err)
@@ -378,6 +418,11 @@ func NewTestCluster(t *testing.T, validatorsCount int, opts ...ClusterOption) *T
 			"--epoch-reward", strconv.Itoa(cluster.Config.EpochReward),
 			"--premine", "0x0000000000000000000000000000000000000000",
 			"--trieroot", cluster.Config.InitialStateRoot.String(),
+		}
+
+		// add optional genesis flags
+		if cluster.Config.NativeTokenConfigRaw != "" {
+			args = append(args, "--native-token-config", cluster.Config.NativeTokenConfigRaw)
 		}
 
 		if len(cluster.Config.Premine) != 0 {
@@ -411,10 +456,6 @@ func NewTestCluster(t *testing.T, validatorsCount int, opts ...ClusterOption) *T
 			}
 		}
 
-		if cluster.Config.ValidatorSetSize > 0 {
-			args = append(args, "--validator-set-size", fmt.Sprint(cluster.Config.ValidatorSetSize))
-		}
-
 		if len(cluster.Config.ContractDeployerAllowListAdmin) != 0 {
 			args = append(args, "--contract-deployer-allow-list-admin",
 				strings.Join(sliceAddressToSliceString(cluster.Config.ContractDeployerAllowListAdmin), ","))
@@ -441,23 +482,25 @@ func NewTestCluster(t *testing.T, validatorsCount int, opts ...ClusterOption) *T
 	}
 
 	for i := 1; i <= int(cluster.Config.ValidatorSetSize); i++ {
-		cluster.InitTestServer(t, i, true, cluster.Config.HasBridge && i == 1 /* relayer */)
+		dir := cluster.Config.ValidatorPrefix + strconv.Itoa(i)
+		cluster.InitTestServer(t, dir, true, cluster.Config.HasBridge && i == 1 /* relayer */)
 	}
 
 	for i := 1; i <= cluster.Config.NonValidatorCount; i++ {
-		offsetIndex := i + int(cluster.Config.ValidatorSetSize)
-		cluster.InitTestServer(t, offsetIndex, false, false /* relayer */)
+		dir := nonValidatorPrefix + strconv.Itoa(i)
+		cluster.InitTestServer(t, dir, false, false /* relayer */)
 	}
 
 	return cluster
 }
 
-func (c *TestCluster) InitTestServer(t *testing.T, i int, isValidator bool, relayer bool) {
+func (c *TestCluster) InitTestServer(t *testing.T,
+	dataDir string, isValidator bool, relayer bool) {
 	t.Helper()
 
 	logLevel := os.Getenv(envLogLevel)
 
-	dataDir := c.Config.Dir(c.Config.ValidatorPrefix + strconv.Itoa(i))
+	dataDir = c.Config.Dir(dataDir)
 	if c.Config.InitialTrieDB != "" {
 		err := CopyDir(c.Config.InitialTrieDB, filepath.Join(dataDir, "trie"))
 		if err != nil {
