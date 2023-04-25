@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/0xPolygon/polygon-edge/command/genesis"
-	"github.com/0xPolygon/polygon-edge/command/rootchain/helper"
 	"github.com/0xPolygon/polygon-edge/helper/common"
 	"github.com/0xPolygon/polygon-edge/txrelayer"
 	"github.com/0xPolygon/polygon-edge/types"
@@ -91,8 +90,12 @@ type TestClusterConfig struct {
 
 	ContractDeployerAllowListAdmin   []types.Address
 	ContractDeployerAllowListEnabled []types.Address
+	ContractDeployerBlockListAdmin   []types.Address
+	ContractDeployerBlockListEnabled []types.Address
 	TransactionsAllowListAdmin       []types.Address
 	TransactionsAllowListEnabled     []types.Address
+	TransactionsBlockListAdmin       []types.Address
+	TransactionsBlockListEnabled     []types.Address
 
 	NumBlockConfirmations uint64
 
@@ -265,6 +268,18 @@ func WithContractDeployerAllowListEnabled(addr types.Address) ClusterOption {
 	}
 }
 
+func WithContractDeployerBlockListAdmin(addr types.Address) ClusterOption {
+	return func(h *TestClusterConfig) {
+		h.ContractDeployerBlockListAdmin = append(h.ContractDeployerBlockListAdmin, addr)
+	}
+}
+
+func WithContractDeployerBlockListEnabled(addr types.Address) ClusterOption {
+	return func(h *TestClusterConfig) {
+		h.ContractDeployerBlockListEnabled = append(h.ContractDeployerBlockListEnabled, addr)
+	}
+}
+
 func WithTransactionsAllowListAdmin(addr types.Address) ClusterOption {
 	return func(h *TestClusterConfig) {
 		h.TransactionsAllowListAdmin = append(h.TransactionsAllowListAdmin, addr)
@@ -274,6 +289,18 @@ func WithTransactionsAllowListAdmin(addr types.Address) ClusterOption {
 func WithTransactionsAllowListEnabled(addr types.Address) ClusterOption {
 	return func(h *TestClusterConfig) {
 		h.TransactionsAllowListEnabled = append(h.TransactionsAllowListEnabled, addr)
+	}
+}
+
+func WithTransactionsBlockListAdmin(addr types.Address) ClusterOption {
+	return func(h *TestClusterConfig) {
+		h.TransactionsBlockListAdmin = append(h.TransactionsBlockListAdmin, addr)
+	}
+}
+
+func WithTransactionsBlockListEnabled(addr types.Address) ClusterOption {
+	return func(h *TestClusterConfig) {
+		h.TransactionsBlockListEnabled = append(h.TransactionsBlockListEnabled, addr)
 	}
 }
 
@@ -307,15 +334,14 @@ func NewTestCluster(t *testing.T, validatorsCount int, opts ...ClusterOption) *T
 	var err error
 
 	config := &TestClusterConfig{
-		t:                 t,
-		WithLogs:          isTrueEnv(envLogsEnabled),
-		WithStdout:        isTrueEnv(envStdoutEnabled),
-		Binary:            resolveBinary(),
-		EpochSize:         10,
-		EpochReward:       1,
-		BlockGasLimit:     1e7, // 10M
-		PremineValidators: []string{},
-		StakeAmounts:      []string{},
+		t:             t,
+		WithLogs:      isTrueEnv(envLogsEnabled),
+		WithStdout:    isTrueEnv(envStdoutEnabled),
+		Binary:        resolveBinary(),
+		EpochSize:     10,
+		EpochReward:   1,
+		BlockGasLimit: 1e7, // 10M
+		StakeAmounts:  []string{},
 	}
 
 	if config.ValidatorPrefix == "" {
@@ -372,47 +398,15 @@ func NewTestCluster(t *testing.T, validatorsCount int, opts ...ClusterOption) *T
 		}
 	}
 
-	manifestPath := path.Join(config.TmpDir, "manifest.json")
-	args := []string{
-		"manifest",
-		"--path", manifestPath,
-		"--validators-path", config.TmpDir,
-		"--validators-prefix", cluster.Config.ValidatorPrefix,
-	}
-
-	// premine validators
-	for _, premineValidator := range cluster.Config.PremineValidators {
-		args = append(args, "--premine-validators", premineValidator)
-	}
-
-	for _, validatorStake := range cluster.Config.StakeAmounts {
-		args = append(args, "--stake", validatorStake)
-	}
-
-	// run manifest file creation
-	require.NoError(t, cluster.cmdRun(args...))
-
-	if cluster.Config.HasBridge {
-		// start bridge
-		cluster.Bridge, err = NewTestBridge(t, cluster.Config)
-		require.NoError(t, err)
-	}
-
-	if cluster.Config.HasBridge {
-		err := cluster.Bridge.deployRootchainContracts(manifestPath)
-		require.NoError(t, err)
-
-		err = cluster.Bridge.fundRootchainValidators()
-		require.NoError(t, err)
-	}
+	genesisPath := path.Join(config.TmpDir, "genesis.json")
 
 	{
 		// run genesis configuration population
 		args := []string{
 			"genesis",
-			"--manifest", manifestPath,
-			"--consensus", "polybft",
-			"--dir", path.Join(config.TmpDir, "genesis.json"),
+			"--validators-path", config.TmpDir,
+			"--validators-prefix", cluster.Config.ValidatorPrefix,
+			"--dir", genesisPath,
 			"--block-gas-limit", strconv.FormatUint(cluster.Config.BlockGasLimit, 10),
 			"--epoch-size", strconv.Itoa(cluster.Config.EpochSize),
 			"--epoch-reward", strconv.Itoa(cluster.Config.EpochReward),
@@ -435,12 +429,6 @@ func NewTestCluster(t *testing.T, validatorsCount int, opts ...ClusterOption) *T
 			args = append(args, "--mintable-native-token")
 		}
 
-		if cluster.Config.HasBridge {
-			rootchainIP, err := helper.ReadRootchainIP()
-			require.NoError(t, err)
-			args = append(args, "--bridge-json-rpc", rootchainIP)
-		}
-
 		validators, err := genesis.ReadValidatorsByPrefix(
 			cluster.Config.TmpDir, cluster.Config.ValidatorPrefix)
 		require.NoError(t, err)
@@ -456,6 +444,11 @@ func NewTestCluster(t *testing.T, validatorsCount int, opts ...ClusterOption) *T
 			}
 		}
 
+		// provide validators' stakes
+		for _, validatorStake := range cluster.Config.StakeAmounts {
+			args = append(args, "--stake", validatorStake)
+		}
+
 		if len(cluster.Config.ContractDeployerAllowListAdmin) != 0 {
 			args = append(args, "--contract-deployer-allow-list-admin",
 				strings.Join(sliceAddressToSliceString(cluster.Config.ContractDeployerAllowListAdmin), ","))
@@ -464,6 +457,16 @@ func NewTestCluster(t *testing.T, validatorsCount int, opts ...ClusterOption) *T
 		if len(cluster.Config.ContractDeployerAllowListEnabled) != 0 {
 			args = append(args, "--contract-deployer-allow-list-enabled",
 				strings.Join(sliceAddressToSliceString(cluster.Config.ContractDeployerAllowListEnabled), ","))
+		}
+
+		if len(cluster.Config.ContractDeployerBlockListAdmin) != 0 {
+			args = append(args, "--contract-deployer-block-list-admin",
+				strings.Join(sliceAddressToSliceString(cluster.Config.ContractDeployerBlockListAdmin), ","))
+		}
+
+		if len(cluster.Config.ContractDeployerBlockListEnabled) != 0 {
+			args = append(args, "--contract-deployer-block-list-enabled",
+				strings.Join(sliceAddressToSliceString(cluster.Config.ContractDeployerBlockListEnabled), ","))
 		}
 
 		if len(cluster.Config.TransactionsAllowListAdmin) != 0 {
@@ -476,8 +479,32 @@ func NewTestCluster(t *testing.T, validatorsCount int, opts ...ClusterOption) *T
 				strings.Join(sliceAddressToSliceString(cluster.Config.TransactionsAllowListEnabled), ","))
 		}
 
-		// run cmd init-genesis with all the arguments
+		if len(cluster.Config.TransactionsBlockListAdmin) != 0 {
+			args = append(args, "--transactions-block-list-admin",
+				strings.Join(sliceAddressToSliceString(cluster.Config.TransactionsBlockListAdmin), ","))
+		}
+
+		if len(cluster.Config.TransactionsBlockListEnabled) != 0 {
+			args = append(args, "--transactions-block-list-enabled",
+				strings.Join(sliceAddressToSliceString(cluster.Config.TransactionsBlockListEnabled), ","))
+		}
+
+		// run genesis command with all the arguments
 		err = cluster.cmdRun(args...)
+		require.NoError(t, err)
+	}
+
+	if cluster.Config.HasBridge {
+		// start bridge
+		cluster.Bridge, err = NewTestBridge(t, cluster.Config)
+		require.NoError(t, err)
+
+		// deploy rootchain contracts
+		err := cluster.Bridge.deployRootchainContracts(genesisPath)
+		require.NoError(t, err)
+
+		// fund validators on the rootchain
+		err = cluster.Bridge.fundRootchainValidators()
 		require.NoError(t, err)
 	}
 
