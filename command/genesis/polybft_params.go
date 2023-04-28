@@ -39,7 +39,6 @@ const (
 	defaultSprintSize       = uint64(5)
 	defaultValidatorSetSize = 100
 	defaultBlockTime        = 2 * time.Second
-	defaultBridge           = false
 	defaultEpochReward      = 1
 
 	contractDeployerAllowListAdminFlag   = "contract-deployer-allow-list-admin"
@@ -50,6 +49,10 @@ const (
 	transactionsAllowListEnabledFlag     = "transactions-allow-list-enabled"
 	transactionsBlockListAdminFlag       = "transactions-block-list-admin"
 	transactionsBlockListEnabledFlag     = "transactions-block-list-enabled"
+	bridgeAllowListAdminFlag             = "bridge-allow-list-admin"
+	bridgeAllowListEnabledFlag           = "bridge-allow-list-enabled"
+	bridgeBlockListAdminFlag             = "bridge-block-list-admin"
+	bridgeBlockListEnabledFlag           = "bridge-block-list-enabled"
 
 	bootnodePortStart = 30301
 
@@ -116,6 +119,7 @@ func (p *genesisParams) generatePolyBftChainConfig(o command.OutputFormatter) er
 			Engine: map[string]interface{}{
 				string(server.PolyBFTConsensus): polyBftConfig,
 			},
+			BurnContract: map[uint64]string{},
 		},
 		Bootnodes: p.bootnodes,
 	}
@@ -152,6 +156,15 @@ func (p *genesisParams) generatePolyBftChainConfig(o command.OutputFormatter) er
 		}
 	}
 
+	for _, burnContract := range p.burnContracts {
+		block, addr, err := parseBurnContractInfo(burnContract)
+		if err != nil {
+			return err
+		}
+
+		chainConfig.Params.BurnContract[block] = addr.String()
+	}
+
 	validatorMetadata := make([]*polybft.ValidatorMetadata, len(initialValidators))
 
 	for i, validator := range initialValidators {
@@ -182,6 +195,8 @@ func (p *genesisParams) generatePolyBftChainConfig(o command.OutputFormatter) er
 		ExtraData:  genesisExtraData,
 		GasUsed:    command.DefaultGenesisGasUsed,
 		Mixhash:    polybft.PolyBFTMixDigest,
+		BaseFee:    chain.GenesisBaseFee,
+		BaseFeeEM:  chain.GenesisBaseFeeEM,
 	}
 
 	if len(p.contractDeployerAllowListAdmin) != 0 {
@@ -217,6 +232,24 @@ func (p *genesisParams) generatePolyBftChainConfig(o command.OutputFormatter) er
 		chainConfig.Params.TransactionsBlockList = &chain.AddressListConfig{
 			AdminAddresses:   stringSliceToAddressSlice(p.transactionsBlockListAdmin),
 			EnabledAddresses: stringSliceToAddressSlice(p.transactionsBlockListEnabled),
+		}
+	}
+
+	if len(p.bridgeAllowListAdmin) != 0 {
+		// only enable allow list if there is at least one address as **admin**, otherwise
+		// the allow list could never be updated
+		chainConfig.Params.BridgeAllowList = &chain.AddressListConfig{
+			AdminAddresses:   stringSliceToAddressSlice(p.bridgeAllowListAdmin),
+			EnabledAddresses: stringSliceToAddressSlice(p.bridgeAllowListEnabled),
+		}
+	}
+
+	if len(p.bridgeBlockListAdmin) != 0 {
+		// only enable block list if there is at least one address as **admin**, otherwise
+		// the block list could never be updated
+		chainConfig.Params.BridgeBlockList = &chain.AddressListConfig{
+			AdminAddresses:   stringSliceToAddressSlice(p.bridgeBlockListAdmin),
+			EnabledAddresses: stringSliceToAddressSlice(p.bridgeBlockListEnabled),
 		}
 	}
 

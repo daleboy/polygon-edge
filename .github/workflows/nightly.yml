@@ -43,18 +43,12 @@ jobs:
     uses: ./.github/workflows/fuzz-test.yml
     needs: build
 
-  notification:
-    name: Nightly Notifications
-    runs-on: ubuntu-latest
-    needs: [build, test, e2e, e2eibft, property, fuzz]
-
   loadtest:
     name: Build Devnet
     uses: ./.github/workflows/deploy.nightly.devnet.yml
     secrets:
       AWS_REGION: ${{ secrets.AWS_REGION }}
       AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
-      TF_VAR_COMPANY_NAME: ${{ secrets.TF_VAR_COMPANY_NAME }}
       TF_VAR_DEPLOYMENT_NAME: ${{ secrets.TF_VAR_DEPLOYMENT_NAME }}
       TF_VAR_OWNER: ${{ secrets.TF_VAR_OWNER }}
       SLACK_PERFORMANCE_WEBHOOK_URL: ${{ secrets.SLACK_PERFORMANCE_WEBHOOK_URL }}
@@ -139,7 +133,14 @@ jobs:
                   "type": "section",
                   "text": {
                     "type": "mrkdwn",
-                    "text": "Load tests ${{ needs.loadtest.outputs.workflow_output == '' && ':white_check_mark:' || ':x: `failed`' }}"
+                    "text": "Load tests (multiple_EOA) ${{ needs.loadtest.outputs.workflow_output_loadtest1 == '' && ':white_check_mark:' || ':x: `failed`' }}"
+                  }
+                },
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "Load tests (multiple_ERC20) ${{ needs.loadtest.outputs.workflow_output_loadtest2 == '' && ':white_check_mark:' || ':x: `failed`' }}"
                   }
                 },
                 {

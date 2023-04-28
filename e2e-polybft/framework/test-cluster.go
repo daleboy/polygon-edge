@@ -80,6 +80,7 @@ type TestClusterConfig struct {
 	LogsDir              string
 	TmpDir               string
 	BlockGasLimit        uint64
+	BurnContracts        map[uint64]types.Address
 	ValidatorPrefix      string
 	Binary               string
 	ValidatorSetSize     uint64
@@ -96,6 +97,10 @@ type TestClusterConfig struct {
 	TransactionsAllowListEnabled     []types.Address
 	TransactionsBlockListAdmin       []types.Address
 	TransactionsBlockListEnabled     []types.Address
+	BridgeAllowListAdmin             []types.Address
+	BridgeAllowListEnabled           []types.Address
+	BridgeBlockListAdmin             []types.Address
+	BridgeBlockListEnabled           []types.Address
 
 	NumBlockConfirmations uint64
 
@@ -250,6 +255,16 @@ func WithBlockGasLimit(blockGasLimit uint64) ClusterOption {
 	}
 }
 
+func WithBurnContract(block uint64, address types.Address) ClusterOption {
+	return func(h *TestClusterConfig) {
+		if h.BurnContracts == nil {
+			h.BurnContracts = map[uint64]types.Address{}
+		}
+
+		h.BurnContracts[block] = address
+	}
+}
+
 func WithNumBlockConfirmations(numBlockConfirmations uint64) ClusterOption {
 	return func(h *TestClusterConfig) {
 		h.NumBlockConfirmations = numBlockConfirmations
@@ -301,6 +316,30 @@ func WithTransactionsBlockListAdmin(addr types.Address) ClusterOption {
 func WithTransactionsBlockListEnabled(addr types.Address) ClusterOption {
 	return func(h *TestClusterConfig) {
 		h.TransactionsBlockListEnabled = append(h.TransactionsBlockListEnabled, addr)
+	}
+}
+
+func WithBridgeAllowListAdmin(addr types.Address) ClusterOption {
+	return func(h *TestClusterConfig) {
+		h.BridgeAllowListAdmin = append(h.BridgeAllowListAdmin, addr)
+	}
+}
+
+func WithBridgeAllowListEnabled(addr types.Address) ClusterOption {
+	return func(h *TestClusterConfig) {
+		h.BridgeAllowListEnabled = append(h.BridgeAllowListEnabled, addr)
+	}
+}
+
+func WithBridgeBlockListAdmin(addr types.Address) ClusterOption {
+	return func(h *TestClusterConfig) {
+		h.BridgeBlockListAdmin = append(h.BridgeBlockListAdmin, addr)
+	}
+}
+
+func WithBridgeBlockListEnabled(addr types.Address) ClusterOption {
+	return func(h *TestClusterConfig) {
+		h.BridgeBlockListEnabled = append(h.BridgeBlockListEnabled, addr)
 	}
 }
 
@@ -429,6 +468,15 @@ func NewTestCluster(t *testing.T, validatorsCount int, opts ...ClusterOption) *T
 			args = append(args, "--mintable-native-token")
 		}
 
+		if len(cluster.Config.BurnContracts) != 0 {
+			for block, addr := range cluster.Config.BurnContracts {
+				args = append(args, "--burn-contract", fmt.Sprintf("%d:%s", block, addr))
+			}
+		} else {
+			// London hardfork is enabled by default so there must be a default burn contract
+			args = append(args, "--burn-contract", "0:0x0000000000000000000000000000000000000000")
+		}
+
 		validators, err := genesis.ReadValidatorsByPrefix(
 			cluster.Config.TmpDir, cluster.Config.ValidatorPrefix)
 		require.NoError(t, err)
@@ -487,6 +535,26 @@ func NewTestCluster(t *testing.T, validatorsCount int, opts ...ClusterOption) *T
 		if len(cluster.Config.TransactionsBlockListEnabled) != 0 {
 			args = append(args, "--transactions-block-list-enabled",
 				strings.Join(sliceAddressToSliceString(cluster.Config.TransactionsBlockListEnabled), ","))
+		}
+
+		if len(cluster.Config.BridgeAllowListAdmin) != 0 {
+			args = append(args, "--bridge-allow-list-admin",
+				strings.Join(sliceAddressToSliceString(cluster.Config.BridgeAllowListAdmin), ","))
+		}
+
+		if len(cluster.Config.BridgeAllowListEnabled) != 0 {
+			args = append(args, "--bridge-allow-list-enabled",
+				strings.Join(sliceAddressToSliceString(cluster.Config.BridgeAllowListEnabled), ","))
+		}
+
+		if len(cluster.Config.BridgeBlockListAdmin) != 0 {
+			args = append(args, "--bridge-block-list-admin",
+				strings.Join(sliceAddressToSliceString(cluster.Config.BridgeBlockListAdmin), ","))
+		}
+
+		if len(cluster.Config.BridgeBlockListEnabled) != 0 {
+			args = append(args, "--bridge-block-list-enabled",
+				strings.Join(sliceAddressToSliceString(cluster.Config.BridgeBlockListEnabled), ","))
 		}
 
 		// run genesis command with all the arguments
