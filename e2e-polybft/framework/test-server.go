@@ -12,6 +12,7 @@ import (
 	"github.com/0xPolygon/polygon-edge/command/polybftsecrets"
 	rootHelper "github.com/0xPolygon/polygon-edge/command/rootchain/helper"
 	"github.com/0xPolygon/polygon-edge/consensus/polybft"
+	"github.com/0xPolygon/polygon-edge/consensus/polybft/validator"
 	"github.com/0xPolygon/polygon-edge/consensus/polybft/wallet"
 	"github.com/0xPolygon/polygon-edge/server/proto"
 	txpoolProto "github.com/0xPolygon/polygon-edge/txpool/proto"
@@ -197,14 +198,14 @@ func (t *TestServer) Stop() {
 }
 
 // RootchainFund funds given validator account on the rootchain
-func (t *TestServer) RootchainFund(rootNativeERC20Addr types.Address, amount *big.Int) error {
+func (t *TestServer) RootchainFund(stakeToken types.Address, amount *big.Int) error {
 	args := []string{
 		"rootchain",
 		"fund",
 		"--addresses", t.address.String(),
 		"--amounts", amount.String(),
 		"--json-rpc", t.BridgeJSONRPCAddr(),
-		"--native-root-token", rootNativeERC20Addr.String(),
+		"--stake-token", stakeToken.String(),
 		"--mint",
 	}
 
@@ -216,7 +217,7 @@ func (t *TestServer) RootchainFund(rootNativeERC20Addr types.Address, amount *bi
 }
 
 // Stake stakes given amount to validator account encapsulated by given server instance
-func (t *TestServer) Stake(polybftConfig polybft.PolyBFTConfig, chainID int64, amount *big.Int) error {
+func (t *TestServer) Stake(polybftConfig polybft.PolyBFTConfig, amount *big.Int) error {
 	args := []string{
 		"polybft",
 		"stake",
@@ -224,8 +225,8 @@ func (t *TestServer) Stake(polybftConfig polybft.PolyBFTConfig, chainID int64, a
 		"--stake-manager", polybftConfig.Bridge.StakeManagerAddr.String(),
 		"--" + polybftsecrets.AccountDirFlag, t.config.DataDir,
 		"--amount", amount.String(),
-		"--chain-id", strconv.FormatInt(chainID, 10),
-		"--native-root-token", polybftConfig.Bridge.RootNativeERC20Addr.String(),
+		"--supernet-id", strconv.FormatInt(polybftConfig.SupernetID, 10),
+		"--stake-token", polybftConfig.Bridge.StakeTokenAddr.String(),
 	}
 
 	return runCommand(t.clusterConfig.Binary, args, t.clusterConfig.GetStdout("stake"))
@@ -315,7 +316,7 @@ func (t *TestServer) WithdrawRewards() error {
 }
 
 // HasValidatorSealed checks whether given validator has signed at least single block for the given range of blocks
-func (t *TestServer) HasValidatorSealed(firstBlock, lastBlock uint64, validators polybft.AccountSet,
+func (t *TestServer) HasValidatorSealed(firstBlock, lastBlock uint64, validators validator.AccountSet,
 	validatorAddr ethgo.Address) (bool, error) {
 	rpcClient := t.JSONRPC()
 	for i := firstBlock + 1; i <= lastBlock; i++ {

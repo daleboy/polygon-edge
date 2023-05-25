@@ -64,18 +64,18 @@ func setFlags(cmd *cobra.Command) {
 		"amount to stake",
 	)
 
-	cmd.Flags().Uint64Var(
-		&params.chainID,
-		polybftsecrets.ChainIDFlag,
+	cmd.Flags().Int64Var(
+		&params.supernetID,
+		supernetIDFlag,
 		0,
-		polybftsecrets.ChainIDFlagDesc,
+		"ID of supernet provided by stake manager on supernet registration",
 	)
 
 	cmd.Flags().StringVar(
-		&params.nativeRootTokenAddr,
-		rootHelper.NativeRootTokenFlag,
+		&params.stakeTokenAddr,
+		rootHelper.StakeTokenFlag,
 		"",
-		rootHelper.NativeRootTokenFlagDesc,
+		rootHelper.StakeTokenFlagDesc,
 	)
 
 	cmd.MarkFlagsMutuallyExclusive(polybftsecrets.AccountDirFlag, polybftsecrets.AccountConfigFlag)
@@ -108,7 +108,7 @@ func runCommand(cmd *cobra.Command, _ []string) error {
 	}
 
 	approveTxn, err := rootHelper.CreateApproveERC20Txn(params.amountValue,
-		types.StringToAddress(params.stakeManagerAddr), types.StringToAddress(params.nativeRootTokenAddr))
+		types.StringToAddress(params.stakeManagerAddr), types.StringToAddress(params.stakeTokenAddr))
 	if err != nil {
 		return err
 	}
@@ -123,7 +123,7 @@ func runCommand(cmd *cobra.Command, _ []string) error {
 	}
 
 	stakeFn := contractsapi.StakeForStakeManagerFn{
-		ID:     new(big.Int).SetUint64(params.chainID),
+		ID:     new(big.Int).SetInt64(params.supernetID),
 		Amount: params.amountValue,
 	}
 

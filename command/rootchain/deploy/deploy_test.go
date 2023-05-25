@@ -6,12 +6,14 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"github.com/umbracle/ethgo"
 	"github.com/umbracle/ethgo/jsonrpc"
 	"github.com/umbracle/ethgo/testutil"
 
 	"github.com/0xPolygon/polygon-edge/command"
 	"github.com/0xPolygon/polygon-edge/command/rootchain/helper"
-	"github.com/0xPolygon/polygon-edge/consensus/polybft"
+	"github.com/0xPolygon/polygon-edge/consensus/polybft/contractsapi"
+	"github.com/0xPolygon/polygon-edge/consensus/polybft/validator"
 	"github.com/0xPolygon/polygon-edge/types"
 )
 
@@ -35,10 +37,20 @@ func TestDeployContracts_NoPanics(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, uint64(types.ReceiptSuccess), receipt.Status)
 
+	txn := &ethgo.Transaction{
+		To:    nil, // contract deployment
+		Input: contractsapi.StakeManager.Bytecode,
+	}
+
+	receipt, err = server.SendTxn(txn)
+	require.NoError(t, err)
+	require.Equal(t, uint64(types.ReceiptSuccess), receipt.Status)
+
 	outputter := command.InitializeOutputter(GetCommand())
+	params.stakeManagerAddr = receipt.ContractAddress.String()
 
 	require.NotPanics(t, func() {
-		_, _, err = deployContracts(outputter, client, []*polybft.Validator{}, context.Background())
+		_, _, err = deployContracts(outputter, client, 1, []*validator.GenesisValidator{}, context.Background())
 	})
 	require.NoError(t, err)
 }
