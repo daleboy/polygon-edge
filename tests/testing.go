@@ -186,7 +186,7 @@ func (e *env) ToEnv(t *testing.T) runtime.TxContext {
 
 func buildState(
 	allocs map[types.Address]*chain.GenesisAccount,
-) (state.State, state.Snapshot, types.Hash) {
+) (state.State, state.Snapshot, types.Hash, error) {
 	s := itrie.NewState(itrie.NewMemoryStorage())
 	snap := s.NewSnapshot()
 
@@ -206,10 +206,14 @@ func buildState(
 		}
 	}
 
-	objs := txn.Commit(false)
+	objs, err := txn.Commit(false)
+	if err != nil {
+		return nil, nil, types.ZeroHash, err
+	}
+
 	snap, root := snap.Commit(objs)
 
-	return s, snap, types.BytesToHash(root)
+	return s, snap, types.BytesToHash(root), nil
 }
 
 type indexes struct {
@@ -405,83 +409,72 @@ func (t *stTransaction) UnmarshalJSON(input []byte) error {
 var Forks = map[string]*chain.Forks{
 	"Frontier": {},
 	"Homestead": {
-		Homestead: chain.NewFork(0),
+		chain.Homestead: chain.NewFork(0),
 	},
 	"EIP150": {
-		Homestead: chain.NewFork(0),
-		EIP150:    chain.NewFork(0),
+		chain.Homestead: chain.NewFork(0),
+		chain.EIP150:    chain.NewFork(0),
 	},
 	"EIP158": {
-		Homestead: chain.NewFork(0),
-		EIP150:    chain.NewFork(0),
-		EIP155:    chain.NewFork(0),
-		EIP158:    chain.NewFork(0),
+		chain.Homestead: chain.NewFork(0),
+		chain.EIP150:    chain.NewFork(0),
+		chain.EIP155:    chain.NewFork(0),
+		chain.EIP158:    chain.NewFork(0),
 	},
 	"Byzantium": {
-		Homestead: chain.NewFork(0),
-		EIP150:    chain.NewFork(0),
-		EIP155:    chain.NewFork(0),
-		EIP158:    chain.NewFork(0),
-		Byzantium: chain.NewFork(0),
+		chain.Homestead: chain.NewFork(0),
+		chain.EIP150:    chain.NewFork(0),
+		chain.EIP155:    chain.NewFork(0),
+		chain.EIP158:    chain.NewFork(0),
+		chain.Byzantium: chain.NewFork(0),
 	},
 	"Constantinople": {
-		Homestead:      chain.NewFork(0),
-		EIP150:         chain.NewFork(0),
-		EIP155:         chain.NewFork(0),
-		EIP158:         chain.NewFork(0),
-		Byzantium:      chain.NewFork(0),
-		Constantinople: chain.NewFork(0),
+		chain.Homestead:      chain.NewFork(0),
+		chain.EIP150:         chain.NewFork(0),
+		chain.EIP155:         chain.NewFork(0),
+		chain.EIP158:         chain.NewFork(0),
+		chain.Byzantium:      chain.NewFork(0),
+		chain.Constantinople: chain.NewFork(0),
 	},
-	"Istanbul": {
-		Homestead:      chain.NewFork(0),
-		EIP150:         chain.NewFork(0),
-		EIP155:         chain.NewFork(0),
-		EIP158:         chain.NewFork(0),
-		Byzantium:      chain.NewFork(0),
-		Constantinople: chain.NewFork(0),
-		Petersburg:     chain.NewFork(0),
-		Istanbul:       chain.NewFork(0),
+	"Istchain.anbul": {
+		chain.Homestead:      chain.NewFork(0),
+		chain.EIP150:         chain.NewFork(0),
+		chain.EIP155:         chain.NewFork(0),
+		chain.EIP158:         chain.NewFork(0),
+		chain.Byzantium:      chain.NewFork(0),
+		chain.Constantinople: chain.NewFork(0),
+		chain.Petersburg:     chain.NewFork(0),
+		chain.Istanbul:       chain.NewFork(0),
 	},
-	/*"London": {
-		Homestead:      chain.NewFork(0),
-		EIP150:         chain.NewFork(0),
-		EIP155:         chain.NewFork(0),
-		EIP158:         chain.NewFork(0),
-		Byzantium:      chain.NewFork(0),
-		Constantinople: chain.NewFork(0),
-		Petersburg:     chain.NewFork(0),
-		Istanbul:       chain.NewFork(0),
-		London:         chain.NewFork(0),
-	},*/
 	"FrontierToHomesteadAt5": {
-		Homestead: chain.NewFork(5),
+		chain.Homestead: chain.NewFork(5),
 	},
 	"HomesteadToEIP150At5": {
-		Homestead: chain.NewFork(0),
-		EIP150:    chain.NewFork(5),
+		chain.Homestead: chain.NewFork(0),
+		chain.EIP150:    chain.NewFork(5),
 	},
 	"HomesteadToDaoAt5": {
-		Homestead: chain.NewFork(0),
+		chain.Homestead: chain.NewFork(0),
 	},
 	"EIP158ToByzantiumAt5": {
-		Homestead: chain.NewFork(0),
-		EIP150:    chain.NewFork(0),
-		EIP155:    chain.NewFork(0),
-		EIP158:    chain.NewFork(0),
-		Byzantium: chain.NewFork(5),
+		chain.Homestead: chain.NewFork(0),
+		chain.EIP150:    chain.NewFork(0),
+		chain.EIP155:    chain.NewFork(0),
+		chain.EIP158:    chain.NewFork(0),
+		chain.Byzantium: chain.NewFork(5),
 	},
 	"ByzantiumToConstantinopleAt5": {
-		Byzantium:      chain.NewFork(0),
-		Constantinople: chain.NewFork(5),
+		chain.Byzantium:      chain.NewFork(0),
+		chain.Constantinople: chain.NewFork(5),
 	},
 	"ConstantinopleFix": {
-		Homestead:      chain.NewFork(0),
-		EIP150:         chain.NewFork(0),
-		EIP155:         chain.NewFork(0),
-		EIP158:         chain.NewFork(0),
-		Byzantium:      chain.NewFork(0),
-		Constantinople: chain.NewFork(0),
-		Petersburg:     chain.NewFork(0),
+		chain.Homestead:      chain.NewFork(0),
+		chain.EIP150:         chain.NewFork(0),
+		chain.EIP155:         chain.NewFork(0),
+		chain.EIP158:         chain.NewFork(0),
+		chain.Byzantium:      chain.NewFork(0),
+		chain.Constantinople: chain.NewFork(0),
+		chain.Petersburg:     chain.NewFork(0),
 	},
 }
 
