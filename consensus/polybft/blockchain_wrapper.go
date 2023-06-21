@@ -38,8 +38,7 @@ type blockchainBackend interface {
 		txPool txPoolInterface, blockTime time.Duration, logger hclog.Logger) (blockBuilder, error)
 
 	// ProcessBlock builds a final block from given 'block' on top of 'parent'.
-	ProcessBlock(parent *types.Header, block *types.Block,
-		callback func(*state.Transition) error) (*types.FullBlock, error)
+	ProcessBlock(parent *types.Header, block *types.Block) (*types.FullBlock, error)
 
 	// GetStateProviderForBlock returns a reference to make queries to the state at 'block'.
 	GetStateProviderForBlock(block *types.Header) (contract.Provider, error)
@@ -79,16 +78,11 @@ func (p *blockchainWrapper) CurrentHeader() *types.Header {
 
 // CommitBlock commits a block to the chain
 func (p *blockchainWrapper) CommitBlock(block *types.FullBlock) error {
-	if err := p.blockchain.WriteFullBlock(block, consensusSource); err != nil {
-		return err
-	}
-
-	return nil
+	return p.blockchain.WriteFullBlock(block, consensusSource)
 }
 
 // ProcessBlock builds a final block from given 'block' on top of 'parent'
-func (p *blockchainWrapper) ProcessBlock(parent *types.Header, block *types.Block,
-	callback func(*state.Transition) error) (*types.FullBlock, error) {
+func (p *blockchainWrapper) ProcessBlock(parent *types.Header, block *types.Block) (*types.FullBlock, error) {
 	header := block.Header.Copy()
 	start := time.Now().UTC()
 
@@ -101,12 +95,6 @@ func (p *blockchainWrapper) ProcessBlock(parent *types.Header, block *types.Bloc
 	for _, tx := range block.Transactions {
 		if err = transition.Write(tx); err != nil {
 			return nil, fmt.Errorf("process block tx error, tx = %v, err = %w", tx.Hash, err)
-		}
-	}
-
-	if callback != nil {
-		if err := callback(transition); err != nil {
-			return nil, err
 		}
 	}
 
