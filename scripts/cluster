@@ -1,9 +1,23 @@
 #!/usr/bin/env bash
 
+dp_error_flag=0
+
 # Check if jq is installed
 if [[ "$1" == "polybft" ]] && ! command -v jq >/dev/null 2>&1; then
-  echo "jq is not installed. Please install it manually and run the script again."
+  echo "jq is not installed."
   echo "Manual installation instructions: Visit https://jqlang.github.io/jq/ for more information."
+  dp_error_flag=1
+fi
+
+# Check if nc is installed
+if [[ "$1" == "polybft" ]] && ! command -v nc >/dev/null 2>&1; then
+  echo "Netcat (nc) is not installed."
+  dp_error_flag=1
+fi
+
+# Stop script if any of the dependencies have failed
+if [[ "$dp_error_flag" -eq 1 ]]; then
+  echo "Missing dependencies. Please install them and run the script again."
   exit 1
 fi
 
@@ -35,9 +49,9 @@ function createGenesis() {
     --premine 0x85da99c8a7c2c95964c8efd687e95e632fc533d6:1000000000000000000000 \
     --premine 0x0000000000000000000000000000000000000000 \
     --epoch-size 10 \
-    --burn-contract 0:0x0000000000000000000000000000000000000000 \
     --reward-wallet 0xDEADBEEF:1000000 \
-    --native-token-config "Polygon:MATIC:18:true:$address1"
+    --native-token-config "Polygon:MATIC:18:true:$address1" \
+    --burn-contract 0:0x0000000000000000000000000000000000000000
 }
 
 function initRootchain() {
@@ -119,7 +133,7 @@ function startServerFromBinary() {
   if [ "$1" == "write-logs" ]; then
     echo "Writing validators logs to the files..."
     ./polygon-edge server --data-dir ./test-chain-1 --chain genesis.json \
-      --grpc-address :10000 --libp2p :30301 --jsonrpc :10002 \
+      --grpc-address :10000 --libp2p :30301 --jsonrpc :10002 --relayer \
       --num-block-confirmations 2 --seal --log-level DEBUG 2>&1 | tee ./validator-1.log &
     ./polygon-edge server --data-dir ./test-chain-2 --chain genesis.json \
       --grpc-address :20000 --libp2p :30302 --jsonrpc :20002 \
@@ -133,7 +147,7 @@ function startServerFromBinary() {
     wait
   else
     ./polygon-edge server --data-dir ./test-chain-1 --chain genesis.json \
-      --grpc-address :10000 --libp2p :30301 --jsonrpc :10002 \
+      --grpc-address :10000 --libp2p :30301 --jsonrpc :10002 --relayer \
       --num-block-confirmations 2 --seal --log-level DEBUG &
     ./polygon-edge server --data-dir ./test-chain-2 --chain genesis.json \
       --grpc-address :20000 --libp2p :30302 --jsonrpc :20002 \
@@ -149,8 +163,7 @@ function startServerFromBinary() {
 }
 
 function startServerFromDockerCompose() {
-  if [ "$1" != "polybft" ]
-  then
+  if [ "$1" != "polybft" ]; then
     export EDGE_CONSENSUS="$1"
   fi
 

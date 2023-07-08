@@ -74,13 +74,8 @@ func (p *genesisParams) generatePolyBftChainConfig(o command.OutputFormatter) er
 	// populate premine balance map
 	premineBalances := make(map[types.Address]*premineInfo, len(p.premine))
 
-	for _, premine := range p.premine {
-		premineInfo, err := parsePremineInfo(premine)
-		if err != nil {
-			return fmt.Errorf("invalid balance amount provided '%s' : %w", premine, err)
-		}
-
-		premineBalances[premineInfo.address] = premineInfo
+	for _, premine := range p.premineInfos {
+		premineBalances[premine.address] = premine
 	}
 
 	walletPremineInfo, err := parsePremineInfo(p.rewardWallet)
@@ -158,7 +153,7 @@ func (p *genesisParams) generatePolyBftChainConfig(o command.OutputFormatter) er
 
 	// Disable london hardfork if burn contract address is not provided
 	enabledForks := chain.AllForksEnabled
-	if len(p.burnContracts) == 0 {
+	if !p.isBurnContractEnabled() {
 		enabledForks.RemoveFork(chain.London)
 	}
 
@@ -174,8 +169,29 @@ func (p *genesisParams) generatePolyBftChainConfig(o command.OutputFormatter) er
 		Bootnodes: p.bootnodes,
 	}
 
+	burnContractAddr := types.ZeroAddress
+
+	if p.isBurnContractEnabled() {
+		chainConfig.Params.BurnContract = make(map[uint64]types.Address, 1)
+
+		burnContractInfo, err := parseBurnContractInfo(p.burnContract)
+		if err != nil {
+			return err
+		}
+
+		if !p.nativeTokenConfig.IsMintable {
+			// burn contract can be specified on arbitrary address for non-mintable native tokens
+			burnContractAddr = burnContractInfo.Address
+			chainConfig.Params.BurnContract[burnContractInfo.BlockNumber] = burnContractAddr
+			chainConfig.Params.BurnContractDestinationAddress = burnContractInfo.DestinationAddress
+		} else {
+			// burnt funds are sent to zero address when dealing with mintable native tokens
+			chainConfig.Params.BurnContract[burnContractInfo.BlockNumber] = types.ZeroAddress
+		}
+	}
+
 	// deploy genesis contracts
-	allocs, err := p.deployContracts(rewardTokenByteCode, polyBftConfig)
+	allocs, err := p.deployContracts(rewardTokenByteCode, polyBftConfig, chainConfig, burnContractAddr)
 	if err != nil {
 		return err
 	}
@@ -189,19 +205,6 @@ func (p *genesisParams) generatePolyBftChainConfig(o command.OutputFormatter) er
 
 		allocs[premine.address] = &chain.GenesisAccount{
 			Balance: premine.amount,
-		}
-	}
-
-	if len(p.burnContracts) > 0 {
-		chainConfig.Params.BurnContract = make(map[uint64]string, len(p.burnContracts))
-
-		for _, burnContract := range p.burnContracts {
-			block, addr, err := parseBurnContractInfo(burnContract)
-			if err != nil {
-				return err
-			}
-
-			chainConfig.Params.BurnContract[block] = addr.String()
 		}
 	}
 
@@ -291,7 +294,7 @@ func (p *genesisParams) generatePolyBftChainConfig(o command.OutputFormatter) er
 		}
 	}
 
-	if len(p.burnContracts) > 0 {
+	if p.isBurnContractEnabled() {
 		// only populate base fee and base fee multiplier values if burn contract(s)
 		// is provided
 		chainConfig.Genesis.BaseFee = command.DefaultGenesisBaseFee
@@ -301,8 +304,11 @@ func (p *genesisParams) generatePolyBftChainConfig(o command.OutputFormatter) er
 	return helper.WriteGenesisConfigToDisk(chainConfig, params.genesisPath)
 }
 
-func (p *genesisParams) deployContracts(rewardTokenByteCode []byte,
-	polybftConfig *polybft.PolyBFTConfig) (map[types.Address]*chain.GenesisAccount, error) {
+func (p *genesisParams) deployContracts(
+	rewardTokenByteCode []byte,
+	polybftConfig *polybft.PolyBFTConfig,
+	chainConfig *chain.Chain,
+	burnContractAddr types.Address) (map[types.Address]*chain.GenesisAccount, error) {
 	type contractInfo struct {
 		artifact *artifact.Artifact
 		address  types.Address
@@ -360,6 +366,16 @@ func (p *genesisParams) deployContracts(rewardTokenByteCode []byte,
 				artifact: contractsapi.NativeERC20,
 				address:  contracts.NativeERC20TokenContract,
 			})
+
+		// burn contract can be set only for non-mintable native token. If burn contract is set,
+		// default EIP1559 contract will be deployed.
+		if p.isBurnContractEnabled() {
+			genesisContracts = append(genesisContracts,
+				&contractInfo{
+					artifact: contractsapi.EIP1559Burn,
+					address:  burnContractAddr,
+				})
+		}
 	} else {
 		genesisContracts = append(genesisContracts,
 			&contractInfo{

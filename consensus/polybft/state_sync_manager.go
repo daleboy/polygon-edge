@@ -23,6 +23,10 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+type Runtime interface {
+	IsActiveValidator() bool
+}
+
 type StateSyncProof struct {
 	Proof     []types.Hash
 	StateSync *contractsapi.StateSyncedEvent
@@ -81,6 +85,8 @@ type stateSyncManager struct {
 	validatorSet       validator.ValidatorSet
 	epoch              uint64
 	nextCommittedIndex uint64
+
+	runtime Runtime
 }
 
 // topic is an interface for p2p message gossiping
@@ -90,12 +96,14 @@ type topic interface {
 }
 
 // newStateSyncManager creates a new instance of state sync manager
-func newStateSyncManager(logger hclog.Logger, state *State, config *stateSyncConfig) *stateSyncManager {
+func newStateSyncManager(logger hclog.Logger, state *State, config *stateSyncConfig,
+	runtime Runtime) *stateSyncManager {
 	return &stateSyncManager{
 		logger:  logger,
 		state:   state,
 		config:  config,
 		closeCh: make(chan struct{}),
+		runtime: runtime,
 	}
 }
 
@@ -140,6 +148,11 @@ func (s *stateSyncManager) initTracker() error {
 // initTransport subscribes to bridge topics (getting votes for commitments)
 func (s *stateSyncManager) initTransport() error {
 	return s.config.topic.Subscribe(func(obj interface{}, _ peer.ID) {
+		if !s.runtime.IsActiveValidator() {
+			// don't save votes if not a validator
+			return
+		}
+
 		msg, ok := obj.(*polybftProto.TransportMessage)
 		if !ok {
 			s.logger.Warn("failed to deliver vote, invalid msg", "obj", obj)
@@ -218,12 +231,12 @@ func (s *stateSyncManager) verifyVoteSignature(valSet validator.ValidatorSet, si
 }
 
 // AddLog saves the received log from event tracker if it matches a state sync event ABI
-func (s *stateSyncManager) AddLog(eventLog *ethgo.Log) {
+func (s *stateSyncManager) AddLog(eventLog *ethgo.Log) error {
 	event := &contractsapi.StateSyncedEvent{}
 
 	doesMatch, err := event.ParseLog(eventLog)
 	if !doesMatch {
-		return
+		return nil
 	}
 
 	s.logger.Info(
@@ -236,18 +249,22 @@ func (s *stateSyncManager) AddLog(eventLog *ethgo.Log) {
 	if err != nil {
 		s.logger.Error("could not decode state sync event", "err", err)
 
-		return
+		return err
 	}
 
 	if err := s.state.StateSyncStore.insertStateSyncEvent(event); err != nil {
 		s.logger.Error("could not save state sync event to boltDb", "err", err)
 
-		return
+		return err
 	}
 
 	if err := s.buildCommitment(); err != nil {
+		// we don't return an error here. If state sync event is inserted in db,
+		// we will just try to build a commitment on next block or next event arrival
 		s.logger.Error("could not build a commitment on arrival of new state sync", "err", err, "stateSyncID", event.ID)
 	}
+
+	return nil
 }
 
 // Commitment returns a commitment to be submitted if there is a pending commitment with quorum
@@ -492,6 +509,11 @@ func (s *stateSyncManager) buildProofs(commitmentMsg *contractsapi.StateSyncComm
 
 // buildCommitment builds a new commitment, signs it and gossips its vote for it
 func (s *stateSyncManager) buildCommitment() error {
+	if !s.runtime.IsActiveValidator() {
+		// don't build commitment if not a validator
+		return nil
+	}
+
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
