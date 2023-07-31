@@ -37,7 +37,7 @@ var (
 
 // txPoolInterface is an abstraction of transaction pool
 type txPoolInterface interface {
-	Prepare(uint64)
+	Prepare()
 	Length() uint64
 	Peek() *types.Transaction
 	Pop(*types.Transaction)
@@ -380,7 +380,7 @@ func (c *consensusRuntime) FSM() error {
 	}
 
 	if isEndOfSprint {
-		commitment, err := c.stateSyncManager.Commitment()
+		commitment, err := c.stateSyncManager.Commitment(pendingBlockNumber)
 		if err != nil {
 			return err
 		}
