@@ -11,7 +11,6 @@ import (
 	"github.com/0xPolygon/go-ibft/messages/proto"
 	"github.com/0xPolygon/polygon-edge/consensus"
 	"github.com/0xPolygon/polygon-edge/consensus/polybft/bitmap"
-	"github.com/0xPolygon/polygon-edge/consensus/polybft/contractsapi"
 	bls "github.com/0xPolygon/polygon-edge/consensus/polybft/signer"
 	"github.com/0xPolygon/polygon-edge/consensus/polybft/validator"
 	"github.com/0xPolygon/polygon-edge/consensus/polybft/wallet"
@@ -480,6 +479,11 @@ func Test_NewConsensusRuntime(t *testing.T) {
 		blockchain:     blockchainMock,
 		bridgeTopic:    &mockTopic{},
 	}
+
+	require.NoError(t, config.State.StakeStore.insertFullValidatorSet(validatorSetState{
+		BlockNumber: 1,
+	}))
+
 	runtime, err := newConsensusRuntime(hclog.NewNullLogger(), config)
 	require.NoError(t, err)
 
@@ -1073,9 +1077,8 @@ func encodeExitEvents(t *testing.T, exitEvents []*ExitEvent) [][]byte {
 
 	encodedEvents := make([][]byte, len(exitEvents))
 
-	var exitEventAPI contractsapi.L2StateSyncedEvent
 	for i, e := range exitEvents {
-		encodedEvent, err := exitEventAPI.Encode(e.L2StateSyncedEvent)
+		encodedEvent, err := e.L2StateSyncedEvent.Encode()
 		require.NoError(t, err)
 
 		encodedEvents[i] = encodedEvent
