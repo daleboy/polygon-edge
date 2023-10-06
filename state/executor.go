@@ -1044,6 +1044,11 @@ func (t *Transition) SetCodeDirectly(addr types.Address, code []byte) error {
 	return nil
 }
 
+// SetNonPayable deactivates the check of tx cost against tx executor balance.
+func (t *Transition) SetNonPayable(nonPayable bool) {
+	t.ctx.NonPayable = nonPayable
+}
+
 // SetTracer sets tracer to the context in order to enable it
 func (t *Transition) SetTracer(tracer tracer.Tracer) {
 	t.ctx.Tracer = tracer
@@ -1111,14 +1116,18 @@ func checkAndProcessTx(msg *types.Transaction, t *Transition) error {
 		return NewTransitionApplicationError(err, true)
 	}
 
-	// 2. check dynamic fees of the transaction
-	if err := t.checkDynamicFees(msg); err != nil {
-		return NewTransitionApplicationError(err, true)
-	}
+	if !t.ctx.NonPayable {
+		// 2. check dynamic fees of the transaction
+		if err := t.checkDynamicFees(msg); err != nil {
+			return NewTransitionApplicationError(err, true)
+		}
 
-	// 3. caller has enough balance to cover transaction
-	if err := t.subGasLimitPrice(msg); err != nil {
-		return NewTransitionApplicationError(err, true)
+		// 3. caller has enough balance to cover transaction
+		// Skip this check if the given flag is provided.
+		// It happens for eth_call and for other operations that do not change the state.
+		if err := t.subGasLimitPrice(msg); err != nil {
+			return NewTransitionApplicationError(err, true)
+		}
 	}
 
 	return nil
