@@ -149,6 +149,7 @@ func TestE2E_Migration(t *testing.T) {
 	cluster := frameworkpolybft.NewTestCluster(t, 7,
 		frameworkpolybft.WithNonValidators(2),
 		frameworkpolybft.WithValidatorSnapshot(5),
+		frameworkpolybft.WithTestRewardToken(),
 		frameworkpolybft.WithGenesisState(tmpDir, types.Hash(stateRoot)),
 	)
 	defer cluster.Stop()
@@ -204,6 +205,6 @@ func TestE2E_Migration(t *testing.T) {
 	_, err = cluster.InitSecrets("test-chain-8", 1)
 	require.NoError(t, err)
 
-	cluster.InitTestServer(t, "test-chain-8", cluster.Bridge.JSONRPCAddr(), false, false)
+	cluster.InitTestServer(t, "test-chain-8", cluster.Bridge.JSONRPCAddr(), frameworkpolybft.None)
 	require.NoError(t, cluster.WaitForBlock(33, time.Minute))
 }

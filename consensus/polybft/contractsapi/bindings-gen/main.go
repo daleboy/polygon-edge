@@ -48,6 +48,7 @@ func main() {
 			[]string{
 				"commit",
 				"execute",
+				"batchExecute",
 			},
 			[]string{
 				"StateSyncResult",
@@ -351,6 +352,7 @@ func main() {
 				"whitelistValidators",
 				"register",
 				"getValidator",
+				"addGenesisBalance",
 			},
 			[]string{
 				"ValidatorRegistered",

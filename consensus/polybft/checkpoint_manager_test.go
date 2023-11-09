@@ -11,6 +11,7 @@ import (
 	"github.com/umbracle/ethgo/jsonrpc"
 
 	"github.com/0xPolygon/polygon-edge/consensus/polybft/contractsapi"
+	"github.com/0xPolygon/polygon-edge/consensus/polybft/signer"
 	"github.com/0xPolygon/polygon-edge/contracts"
 	"github.com/0xPolygon/polygon-edge/helper/common"
 	"github.com/0xPolygon/polygon-edge/merkle-tree"
@@ -19,8 +20,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/umbracle/ethgo"
 
+	"github.com/0xPolygon/polygon-edge/bls"
 	"github.com/0xPolygon/polygon-edge/consensus/polybft/bitmap"
-	bls "github.com/0xPolygon/polygon-edge/consensus/polybft/signer"
 	"github.com/0xPolygon/polygon-edge/consensus/polybft/validator"
 	"github.com/0xPolygon/polygon-edge/consensus/polybft/wallet"
 	"github.com/0xPolygon/polygon-edge/txrelayer"
@@ -35,87 +36,117 @@ func TestCheckpointManager_SubmitCheckpoint(t *testing.T) {
 		epochSize   = 2
 	)
 
-	var aliases = []string{"A", "B", "C", "D", "E"}
+	t.Run("submit checkpoint happy path", func(t *testing.T) {
+		t.Parallel()
 
-	validators := validator.NewTestValidatorsWithAliases(t, aliases)
-	validatorsMetadata := validators.GetPublicIdentities()
-	txRelayerMock := newDummyTxRelayer(t)
-	txRelayerMock.On("Call", mock.Anything, mock.Anything, mock.Anything).
-		Return("2", error(nil)).
-		Once()
-	txRelayerMock.On("SendTransaction", mock.Anything, mock.Anything).
-		Return(&ethgo.Receipt{Status: uint64(types.ReceiptSuccess)}, error(nil)).
-		Times(4) // send transactions for checkpoint blocks: 4, 6, 8 (pending checkpoint blocks) and 10 (latest checkpoint block)
+		var aliases = []string{"A", "B", "C", "D", "E"}
 
-	backendMock := new(polybftBackendMock)
-	backendMock.On("GetValidators", mock.Anything, mock.Anything).Return(validatorsMetadata)
+		validators := validator.NewTestValidatorsWithAliases(t, aliases)
+		validatorsMetadata := validators.GetPublicIdentities()
 
-	var (
-		headersMap  = &testHeadersMap{}
-		epochNumber = uint64(1)
-		dummyMsg    = []byte("checkpoint")
-		idx         = uint64(0)
-		header      *types.Header
-		bitmap      bitmap.Bitmap
-		signatures  bls.Signatures
-	)
+		txRelayerMock := newDummyTxRelayer(t)
+		txRelayerMock.On("Call", mock.Anything, mock.Anything, mock.Anything).
+			Return("2", error(nil)).
+			Once()
+		txRelayerMock.On("SendTransaction", mock.Anything, mock.Anything).
+			Return(&ethgo.Receipt{Status: uint64(types.ReceiptSuccess)}, error(nil)).
+			Times(4) // send transactions for checkpoint blocks: 4, 6, 8 (pending checkpoint blocks) and 10 (latest checkpoint block)
 
-	validators.IterAcct(aliases, func(t *validator.TestValidator) {
-		bitmap.Set(idx)
-		signatures = append(signatures, t.MustSign(dummyMsg, bls.DomainCheckpointManager))
-		idx++
-	})
+		backendMock := new(polybftBackendMock)
+		backendMock.On("GetValidators", mock.Anything, mock.Anything).Return(validatorsMetadata)
 
-	signature, err := signatures.Aggregate().Marshal()
-	require.NoError(t, err)
+		var (
+			headersMap  = &testHeadersMap{}
+			epochNumber = uint64(1)
+			dummyMsg    = []byte("checkpoint")
+			idx         = uint64(0)
+			header      *types.Header
+			bitmap      bitmap.Bitmap
+			signatures  bls.Signatures
+		)
 
-	for i := uint64(1); i <= blocksCount; i++ {
-		if i%epochSize == 1 {
-			// epoch-beginning block
-			checkpoint := &CheckpointData{
-				BlockRound:  0,
-				EpochNumber: epochNumber,
-				EventRoot:   types.BytesToHash(generateRandomBytes(t)),
+		validators.IterAcct(aliases, func(t *validator.TestValidator) {
+			bitmap.Set(idx)
+			signatures = append(signatures, t.MustSign(dummyMsg, signer.DomainCheckpointManager))
+			idx++
+		})
+
+		signature, err := signatures.Aggregate().Marshal()
+		require.NoError(t, err)
+
+		for i := uint64(1); i <= blocksCount; i++ {
+			if i%epochSize == 1 {
+				// epoch-beginning block
+				checkpoint := &CheckpointData{
+					BlockRound:  0,
+					EpochNumber: epochNumber,
+					EventRoot:   types.BytesToHash(generateRandomBytes(t)),
+				}
+				extra := createTestExtraObject(validatorsMetadata, validatorsMetadata, 3, 3, 3)
+				extra.Checkpoint = checkpoint
+				extra.Committed = &Signature{Bitmap: bitmap, AggregatedSignature: signature}
+				header = &types.Header{
+					ExtraData: extra.MarshalRLPTo(nil),
+				}
+				epochNumber++
+			} else {
+				header = header.Copy()
 			}
-			extra := createTestExtraObject(validatorsMetadata, validatorsMetadata, 3, 3, 3)
-			extra.Checkpoint = checkpoint
-			extra.Committed = &Signature{Bitmap: bitmap, AggregatedSignature: signature}
-			header = &types.Header{
-				ExtraData: extra.MarshalRLPTo(nil),
-			}
-			epochNumber++
-		} else {
-			header = header.Copy()
+
+			header.Number = i
+			header.ComputeHash()
+			headersMap.addHeader(header)
 		}
 
-		header.Number = i
-		header.ComputeHash()
-		headersMap.addHeader(header)
-	}
+		// mock blockchain
+		blockchainMock := new(blockchainMock)
+		blockchainMock.On("GetHeaderByNumber", mock.Anything).Return(headersMap.getHeader)
 
-	// mock blockchain
-	blockchainMock := new(blockchainMock)
-	blockchainMock.On("GetHeaderByNumber", mock.Anything).Return(headersMap.getHeader)
+		validatorAcc := validators.GetValidator("A")
+		c := &checkpointManager{
+			key:              wallet.NewEcdsaSigner(validatorAcc.Key()),
+			rootChainRelayer: txRelayerMock,
+			consensusBackend: backendMock,
+			blockchain:       blockchainMock,
+			logger:           hclog.NewNullLogger(),
+		}
 
-	validatorAcc := validators.GetValidator("A")
-	c := &checkpointManager{
-		key:              wallet.NewEcdsaSigner(validatorAcc.Key()),
-		rootChainRelayer: txRelayerMock,
-		consensusBackend: backendMock,
-		blockchain:       blockchainMock,
-		logger:           hclog.NewNullLogger(),
-	}
+		err = c.submitCheckpoint(headersMap.getHeader(blocksCount), false)
+		require.NoError(t, err)
+		txRelayerMock.AssertExpectations(t)
 
-	err = c.submitCheckpoint(headersMap.getHeader(blocksCount), false)
-	require.NoError(t, err)
-	txRelayerMock.AssertExpectations(t)
+		// make sure that expected blocks are checkpointed (epoch-ending ones)
+		for _, checkpointBlock := range txRelayerMock.checkpointBlocks {
+			header := headersMap.getHeader(checkpointBlock)
+			require.NotNil(t, header)
+			require.True(t, isEndOfPeriod(header.Number, epochSize))
+		}
+	})
 
-	// make sure that expected blocks are checkpointed (epoch-ending ones)
-	for _, checkpointBlock := range txRelayerMock.checkpointBlocks {
-		header := headersMap.getHeader(checkpointBlock)
-		require.NotNil(t, header)
-		require.True(t, isEndOfPeriod(header.Number, epochSize))
-	}
+	t.Run("checkpoint not submitted when node is syncing", func(t *testing.T) {
+		t.Parallel()
+
+		var aliases = []string{"A"}
+
+		validators := validator.NewTestValidatorsWithAliases(t, aliases)
+
+		txRelayerMock := newDummyTxRelayer(t)
+		txRelayerMock.On("Call", mock.Anything, mock.Anything, mock.Anything).
+			Return("20", error(nil)).
+			Once()
+
+		c := &checkpointManager{
+			key:              wallet.NewEcdsaSigner(validators.GetValidator("A").Key()),
+			rootChainRelayer: txRelayerMock,
+			logger:           hclog.NewNullLogger(),
+		}
+
+		err := c.submitCheckpoint(&types.Header{Number: 19 /*lower than what Call returns*/}, false)
+		require.NoError(t, err)
+		// since transaction will not be sent to CheckpointManager, we only expect that Call
+		// will called on tx relayer, and nothing else in submitCheckpoint will be executed
+		txRelayerMock.AssertExpectations(t)
+	})
 }
 
 func TestCheckpointManager_abiEncodeCheckpointBlock(t *testing.T) {
@@ -140,7 +171,7 @@ func TestCheckpointManager_abiEncodeCheckpointBlock(t *testing.T) {
 	var signatures bls.Signatures
 
 	currentValidators.IterAcct(nil, func(v *validator.TestValidator) {
-		signatures = append(signatures, v.MustSign(proposalHash, bls.DomainCheckpointManager))
+		signatures = append(signatures, v.MustSign(proposalHash, signer.DomainCheckpointManager))
 		bmp.Set(i)
 		i++
 	})
@@ -286,128 +317,6 @@ func TestCheckpointManager_IsCheckpointBlock(t *testing.T) {
 			require.Equal(t, c.isCheckpointBlock, checkpointMgr.isCheckpointBlock(c.blockNumber, c.isEpochEndingBlock))
 		})
 	}
-}
-
-func TestCheckpointManager_PostBlock(t *testing.T) {
-	const (
-		numOfReceipts = 5
-		block         = 5
-		epoch         = 1
-	)
-
-	state := newTestState(t)
-
-	createReceipts := func(startID, endID uint64) []*types.Receipt {
-		receipts := make([]*types.Receipt, endID-startID)
-		for i := startID; i < endID; i++ {
-			receipts[i-startID] = &types.Receipt{Logs: []*types.Log{
-				createTestLogForExitEvent(t, i),
-			}}
-			receipts[i-startID].SetStatus(types.ReceiptSuccess)
-		}
-
-		return receipts
-	}
-
-	extra := &Extra{
-		Checkpoint: &CheckpointData{
-			EpochNumber: epoch,
-		},
-	}
-
-	req := &PostBlockRequest{FullBlock: &types.FullBlock{Block: &types.Block{Header: &types.Header{Number: block}}},
-		Epoch: epoch}
-
-	req.FullBlock.Block.Header.ExtraData = extra.MarshalRLPTo(nil)
-
-	blockchain := new(blockchainMock)
-	checkpointManager := newCheckpointManager(wallet.NewEcdsaSigner(createTestKey(t)), 5, types.ZeroAddress,
-		nil, blockchain, nil, hclog.NewNullLogger(), state)
-
-	t.Run("PostBlock - not epoch ending block", func(t *testing.T) {
-		require.NoError(t, state.CheckpointStore.updateLastSaved(block-1)) // we got everything till the current block
-		req.IsEpochEndingBlock = false
-		req.FullBlock.Receipts = createReceipts(0, 5)
-		require.NoError(t, checkpointManager.PostBlock(req))
-
-		exitEvents, err := state.CheckpointStore.getExitEvents(epoch, func(exitEvent *ExitEvent) bool {
-			return exitEvent.BlockNumber == block
-		})
-
-		require.NoError(t, err)
-		require.Len(t, exitEvents, 5)
-		require.Equal(t, uint64(epoch), exitEvents[0].EpochNumber)
-	})
-
-	t.Run("PostBlock - epoch ending block (exit events are saved to the next epoch)", func(t *testing.T) {
-		require.NoError(t, state.CheckpointStore.updateLastSaved(block)) // we got everything till the current block
-		req.IsEpochEndingBlock = true
-		req.FullBlock.Receipts = createReceipts(5, 10)
-		extra.Validators = &validator.ValidatorSetDelta{}
-		req.FullBlock.Block.Header.ExtraData = extra.MarshalRLPTo(nil)
-		req.FullBlock.Block.Header.Number = block + 1
-
-		require.NoError(t, checkpointManager.PostBlock(req))
-
-		exitEvents, err := state.CheckpointStore.getExitEvents(epoch+1, func(exitEvent *ExitEvent) bool {
-			return exitEvent.BlockNumber == block+2 // they should be saved in the next epoch and its first block
-		})
-
-		require.NoError(t, err)
-		require.Len(t, exitEvents, 5)
-		require.Equal(t, uint64(block+2), exitEvents[0].BlockNumber)
-		require.Equal(t, uint64(epoch+1), exitEvents[0].EpochNumber)
-	})
-
-	t.Run("PostBlock - there are missing events", func(t *testing.T) {
-		require.NoError(t, state.CheckpointStore.updateLastSaved(block)) // we are missing one block
-
-		missedReceipts := createReceipts(10, 13)
-		newReceipts := createReceipts(13, 15)
-
-		extra := &Extra{
-			Checkpoint: &CheckpointData{
-				EpochNumber: epoch + 1,
-			},
-		}
-
-		blockchain.On("GetHeaderByNumber", uint64(block+1)).Return(&types.Header{
-			Number:    block + 1,
-			ExtraData: extra.MarshalRLPTo(nil),
-			Hash:      types.BytesToHash([]byte{0, 1, 2, 3}),
-		}, true)
-		blockchain.On("GetReceiptsByHash", types.BytesToHash([]byte{0, 1, 2, 3})).Return([]*types.Receipt{}, nil)
-		blockchain.On("GetHeaderByNumber", uint64(block+2)).Return(&types.Header{
-			Number:    block + 2,
-			ExtraData: extra.MarshalRLPTo(nil),
-			Hash:      types.BytesToHash([]byte{4, 5, 6, 7}),
-		}, true)
-		blockchain.On("GetReceiptsByHash", types.BytesToHash([]byte{4, 5, 6, 7})).Return(missedReceipts, nil)
-
-		req.IsEpochEndingBlock = false
-		req.FullBlock.Block.Header.Number = block + 3                  // new block
-		req.FullBlock.Block.Header.ExtraData = extra.MarshalRLPTo(nil) // same epoch
-		req.FullBlock.Receipts = newReceipts
-		require.NoError(t, checkpointManager.PostBlock(req))
-
-		exitEvents, err := state.CheckpointStore.getExitEvents(epoch+1, func(exitEvent *ExitEvent) bool {
-			return exitEvent.BlockNumber == block+2
-		})
-
-		require.NoError(t, err)
-		// receipts from missed block + events from previous test case that were saved in the next epoch
-		// since they were in epoch ending block
-		require.Len(t, exitEvents, len(missedReceipts)+5)
-		require.Equal(t, extra.Checkpoint.EpochNumber, exitEvents[0].EpochNumber)
-
-		exitEvents, err = state.CheckpointStore.getExitEvents(epoch+1, func(exitEvent *ExitEvent) bool {
-			return exitEvent.BlockNumber == block+3
-		})
-
-		require.NoError(t, err)
-		require.Len(t, exitEvents, len(newReceipts))
-		require.Equal(t, extra.Checkpoint.EpochNumber, exitEvents[0].EpochNumber)
-	})
 }
 
 func TestCheckpointManager_BuildEventRoot(t *testing.T) {

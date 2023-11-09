@@ -18,7 +18,7 @@ import (
 	"github.com/0xPolygon/polygon-edge/consensus/polybft"
 	"github.com/0xPolygon/polygon-edge/consensus/polybft/contractsapi"
 	"github.com/0xPolygon/polygon-edge/consensus/polybft/contractsapi/artifact"
-	bls "github.com/0xPolygon/polygon-edge/consensus/polybft/signer"
+	"github.com/0xPolygon/polygon-edge/consensus/polybft/signer"
 	"github.com/0xPolygon/polygon-edge/consensus/polybft/validator"
 	"github.com/0xPolygon/polygon-edge/contracts"
 	"github.com/0xPolygon/polygon-edge/txrelayer"
@@ -119,13 +119,14 @@ var (
 			config *polybft.RootchainConfig,
 			key ethgo.Key) error {
 			initParams := &contractsapi.InitializeCustomSupernetManagerFn{
-				NewStakeManager:      config.StakeManagerAddress,
-				NewBls:               config.BLSAddress,
-				NewStateSender:       config.StateSenderAddress,
-				NewMatic:             types.StringToAddress(params.stakeTokenAddr),
-				NewChildValidatorSet: contracts.ValidatorSetContract,
-				NewExitHelper:        config.ExitHelperAddress,
-				NewDomain:            bls.DomainValidatorSetString,
+				NewStakeManager:       config.StakeManagerAddress,
+				NewBls:                config.BLSAddress,
+				NewStateSender:        config.StateSenderAddress,
+				NewMatic:              types.StringToAddress(params.stakeTokenAddr),
+				NewChildValidatorSet:  contracts.ValidatorSetContract,
+				NewExitHelper:         config.ExitHelperAddress,
+				NewDomain:             signer.DomainValidatorSetString,
+				NewRootERC20Predicate: config.RootERC20PredicateAddress,
 			}
 
 			return initContract(fmt, relayer, initParams,
@@ -145,18 +146,14 @@ var (
 			relayer txrelayer.TxRelayer,
 			config *polybft.RootchainConfig,
 			key ethgo.Key) error {
-			// map root native token on rootchain only if it is non-mintable on a childchain
-			nativeTokenRootAddr := types.ZeroAddress
-			if !consensusCfg.NativeTokenConfig.IsMintable {
-				nativeTokenRootAddr = config.RootNativeERC20Address
-			}
 
 			inputParams := &contractsapi.InitializeRootERC20PredicateFn{
 				NewStateSender:         config.StateSenderAddress,
 				NewExitHelper:          config.ExitHelperAddress,
 				NewChildERC20Predicate: contracts.ChildERC20PredicateContract,
 				NewChildTokenTemplate:  contracts.ChildERC20Contract,
-				NativeTokenRootAddress: nativeTokenRootAddr,
+				// map root native token address should be non-zero only if native token is non-mintable on a childchain
+				NewNativeTokenRoot: config.RootNativeERC20Address,
 			}
 
 			return initContract(fmt, relayer, inputParams,
