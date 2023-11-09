@@ -13,6 +13,7 @@ import (
 	"github.com/0xPolygon/polygon-edge/consensus/polybft/contractsapi"
 	"github.com/0xPolygon/polygon-edge/e2e-polybft/framework"
 	"github.com/0xPolygon/polygon-edge/helper/hex"
+	"github.com/0xPolygon/polygon-edge/state"
 	"github.com/0xPolygon/polygon-edge/types"
 )
 
@@ -25,7 +26,7 @@ func TestE2E_JsonRPC(t *testing.T) {
 	require.NoError(t, err)
 
 	cluster := framework.NewTestCluster(t, 4,
-		framework.WithNativeTokenConfig(fmt.Sprintf(nativeTokenMintableTestCfg, acct.Address())),
+		framework.WithNativeTokenConfig(fmt.Sprintf(framework.NativeTokenMintableTestCfg, acct.Address())),
 		framework.WithPremine(types.Address(acct.Address())),
 	)
 	defer cluster.Stop()
@@ -34,6 +35,7 @@ func TestE2E_JsonRPC(t *testing.T) {
 
 	jsonRPC := cluster.Servers[0].JSONRPC()
 	client := jsonRPC.Eth()
+	debug := jsonRPC.Debug()
 
 	// Test eth_call with override in state diff
 	t.Run("eth_call state override", func(t *testing.T) {
@@ -123,6 +125,40 @@ func TestE2E_JsonRPC(t *testing.T) {
 		})
 		require.NoError(t, err)
 		require.Equal(t, uint64(0x56a3), resp)
+	})
+
+	t.Run("eth_estimateGas by zero-balance account - simple value transfer", func(t *testing.T) {
+		acctZeroBalance, err := wallet.GenerateKey()
+		require.NoError(t, err)
+
+		fundedAccountAddress := acct.Address()
+		nonFundedAccountAddress := acctZeroBalance.Address()
+
+		estimateGasFn := func(value *big.Int) {
+			resp, err := client.EstimateGas(&ethgo.CallMsg{
+				From:  nonFundedAccountAddress,
+				To:    &fundedAccountAddress,
+				Value: value,
+			})
+
+			require.NoError(t, err)
+			require.Equal(t, state.TxGas, resp)
+		}
+
+		estimateGasFn(ethgo.Gwei(1))
+
+		// transfer some funds to zero balance account
+		valueTransferTxn := cluster.SendTxn(t, acct, &ethgo.Transaction{
+			From:  fundedAccountAddress,
+			To:    &nonFundedAccountAddress,
+			Value: ethgo.Gwei(10),
+		})
+
+		require.NoError(t, valueTransferTxn.Wait())
+		require.True(t, valueTransferTxn.Succeed())
+
+		// now call estimate gas again for the now funded account
+		estimateGasFn(ethgo.Gwei(1))
 	})
 
 	t.Run("eth_getBalance", func(t *testing.T) {
@@ -380,10 +416,7 @@ func TestE2E_JsonRPC(t *testing.T) {
 		txReceipt := txn.Receipt()
 
 		// Use a wrapper function from "jsonrpc" package when the config is introduced.
-		var trace *jsonrpc.TransactionTrace
-		err = jsonRPC.Call("debug_traceTransaction", &trace, txReceipt.TransactionHash, map[string]interface{}{
-			"tracer": "callTracer",
-		})
+		trace, err := debug.TraceTransaction(txReceipt.TransactionHash, jsonrpc.TraceTransactionOptions{})
 		require.NoError(t, err)
 		require.Equal(t, txReceipt.GasUsed, trace.Gas)
 	})

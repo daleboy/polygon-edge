@@ -3,8 +3,8 @@ package framework
 import (
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"math/big"
+	"os"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -27,18 +27,17 @@ import (
 )
 
 type TestServerConfig struct {
-	Name                       string
-	JSONRPCPort                int64
-	GRPCPort                   int64
-	P2PPort                    int64
-	Seal                       bool
-	DataDir                    string
-	Chain                      string
-	LogLevel                   string
-	Relayer                    bool
-	NumBlockConfirmations      uint64
-	BridgeJSONRPC              string
-	RelayerTrackerPollInterval time.Duration
+	Name                  string
+	JSONRPCPort           int64
+	GRPCPort              int64
+	P2PPort               int64
+	Validator             bool
+	DataDir               string
+	Chain                 string
+	LogLevel              string
+	Relayer               bool
+	NumBlockConfirmations uint64
+	BridgeJSONRPC         string
 }
 
 type TestServerConfigCallback func(*TestServerConfig)
@@ -120,7 +119,7 @@ func NewTestServer(t *testing.T, clusterConfig *TestClusterConfig,
 	}
 
 	if config.DataDir == "" {
-		dataDir, err := ioutil.TempDir("/tmp", "edge-e2e-")
+		dataDir, err := os.MkdirTemp("/tmp", "edge-e2e-")
 		require.NoError(t, err)
 
 		config.DataDir = dataDir
@@ -173,17 +172,8 @@ func (t *TestServer) Start() {
 		args = append(args, "--log-level", "DEBUG")
 	}
 
-	if config.Seal {
-		args = append(args, "--seal")
-	}
-
 	if config.Relayer {
 		args = append(args, "--relayer")
-
-		if config.RelayerTrackerPollInterval != 0 {
-			// only relayer node should have this setup if
-			args = append(args, "--relayer-poll-interval", config.RelayerTrackerPollInterval.String())
-		}
 	}
 
 	// Start the server

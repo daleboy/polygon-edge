@@ -44,8 +44,6 @@ const (
 	concurrentRequestsDebugFlag = "concurrent-requests-debug"
 	webSocketReadLimitFlag      = "websocket-read-limit"
 
-	relayerTrackerPollIntervalFlag = "relayer-poll-interval"
-
 	metricsIntervalFlag = "metrics-interval"
 )
 
@@ -189,9 +187,8 @@ func (p *serverParams) generateConfig() *server.Config {
 		JSONLogFormat:      p.rawConfig.JSONLogFormat,
 		LogFilePath:        p.logFileLocation,
 
-		Relayer:                    p.relayer,
-		NumBlockConfirmations:      p.rawConfig.NumBlockConfirmations,
-		RelayerTrackerPollInterval: p.rawConfig.RelayerTrackerPollInterval,
-		MetricsInterval:            p.rawConfig.MetricsInterval,
+		Relayer:               p.relayer,
+		NumBlockConfirmations: p.rawConfig.NumBlockConfirmations,
+		MetricsInterval:       p.rawConfig.MetricsInterval,
 	}
 }

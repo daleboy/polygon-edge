@@ -6,11 +6,12 @@ import (
 	"path"
 	"testing"
 
-	bls "github.com/0xPolygon/polygon-edge/consensus/polybft/signer"
-	"github.com/0xPolygon/polygon-edge/secrets/helper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/umbracle/ethgo/wallet"
+
+	"github.com/0xPolygon/polygon-edge/bls"
+	"github.com/0xPolygon/polygon-edge/secrets/helper"
 )
 
 // Test initKeys
@@ -100,9 +101,7 @@ func Test_getResult(t *testing.T) {
 	assert.Equal(t, sir.Address.String(), pubKey)
 
 	// Test BLS public key serialization
-	blsPrivKeyRaw, err := hex.DecodeString(sir.BLSPrivateKey)
-	require.NoError(t, err)
-	blsPrivKey, err := bls.UnmarshalPrivateKey(blsPrivKeyRaw)
+	blsPrivKey, err := bls.UnmarshalPrivateKey([]byte(sir.BLSPrivateKey))
 	require.NoError(t, err)
 
 	blsPubKey := hex.EncodeToString(blsPrivKey.PublicKey().Marshal())
